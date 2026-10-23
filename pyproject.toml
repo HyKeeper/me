@@ -1,0 +1,23 @@
+# 本仓库**不是**可安装的 Python 包，请不要 `pip install`。
+# 这个文件只做一件事：把运行环境要求写成机器可读的声明，
+# 让编辑器、CI、依赖检查工具能读到，而运行时完全不读它。
+#
+# 所有脚本仍是直接运行：python3 scripts/check.py
+
+[project]
+name = "personal-memory"
+version = "0.1.0"
+description = "Markdown-first personal memory: turn a person into a handover-ready archive"
+readme = "README.md"
+license = { text = "MIT" }
+
+# 实测语法兼容到 3.8（ast.parse feature_version 全部通过），
+# 但 3.8 已 EOL，声明从 3.9 起。
+requires-python = ">=3.9"
+
+# 刻意保持为空：零第三方依赖是这个项目的卖点，不是疏忽。
+# 新增任何依赖前，先读 README 的「设计取舍」一节。
+dependencies = []
+
+# 显式不配 [build-system] 与 [tool.*]：本仓库不打包、不靠任何 linter 才能跑。
+# 想要 ruff/mypy 请在本地自己配，不要把工具链变成项目的前置条件。
