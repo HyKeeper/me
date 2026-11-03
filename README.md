@@ -249,6 +249,33 @@ cp memory/_aliases.example.md  memory/_aliases.md
 
 ---
 
+## 这个仓库里有什么、没有什么
+
+只看到一份 `.gitignore` 长注释，从外部无法判断**边界是设计出来的，还是忘了提交**。所以显式写在这里。
+
+| | 内容 | 是否在仓库 |
+|---|---|---|
+| ✅ | `AGENTS.md` —— 规则宪法 | 开源 |
+| ✅ | `scripts/` —— 校验 / 查询 / 导出工具 | 开源 |
+| ✅ | `ops/export-spec.md` —— 十层导出规格 | 开源 |
+| ✅ | `memory/lexicon.md`、`_synonyms.md` —— 公共词表（只含「词→词」，不含实体绑定） | 开源 |
+| ✅ | `tests/` —— 单元测试 | 开源 |
+| ❌ | `memory/` 的其余全部 —— 真实记忆条目 | **不在仓库** |
+| ❌ | `ops/` 的其余全部 —— lessons / open-questions / health / proposals | **不在仓库** |
+| ❌ | `export-*.md` —— 完整人身档案导出物 | **不在仓库** |
+| ❌ | `scripts/rsu.py`、`total-comp.py`、`push_via_api.py` —— 不含真实数据，但暴露「有什么、从哪拿」 | **不在仓库** |
+
+**这是白名单，不是遗漏。** `.gitignore` 的做法是「整个目录默认排除，再逐个放行」；反过来写（先 `dir/**` 全排除、再用 `!dir/**/` 捞回来）有三个坑，本项目实测都踩过，见 `.gitignore` 头部注释。
+
+边界是否真的成立，不用信任上面这张表：
+
+```bash
+git ls-tree -r HEAD --name-only | grep -E "^(memory|ops)/"
+# 期望只有 5 个：_aliases.example / _config.example / _synonyms / lexicon / export-spec
+```
+
+---
+
 ## 设计取舍（为什么不那么做）
 
 **为什么不用数据库 / SQLite？**
