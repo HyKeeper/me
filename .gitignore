@@ -54,3 +54,10 @@ __pycache__/
 scripts/push_via_api.py
 scripts/rsu.py
 scripts/total-comp.py
+
+# ---- 规则附件：只放行「脱敏模板」，理由与真实示例仍排除 ----
+# ⚠️ 两级白名单是必须的：`ops/*` 忽略的是 rules-detail 这个**目录本身**，
+# 而被忽略目录下的文件无法用 `!` 单独捞回（.gitignore 头部提到的坑 #2）。
+!ops/rules-detail/
+ops/rules-detail/*
+!ops/rules-detail/formats.example.md
