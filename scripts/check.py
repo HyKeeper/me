@@ -51,9 +51,15 @@ TS_OK = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00$")
 TIME_FIELDS = ("spoken_at", "valid_from", "recorded_at")
 VAGUE_WORDS = re.compile(r"满额|不错|挺好|偏低|压力大|还行|一般般|差不多")
 
+# 推论标记：第一人称推断。命中而未标 [source: inference] 即降级警告
+INFER_MARK = re.compile(r"我猜|我推测|我判断|我的推论|本轮推论|\[推论\]")
+BUDGET_SOFT = 900    # 超过即建议拆分
+BUDGET_HARD = 1200   # 超过即错误
+
 # 硬编码派生值：算出来的数写死进库，时间一过就变成错误信息
 DERIVED_PATTERNS = [
-    (re.compile(r"\d+\s*岁"), "年龄"),
+    # 历史表述豁免：「26岁之前就工作了」是原始陈述，不随时间漂移；只拦「今年 30 岁」这类现值
+    (re.compile(r"\d+\s*岁(?!之?前|时|那年)"), "年龄"),
     (re.compile(r"工龄\s*\d+\s*年"), "工龄"),
     (re.compile(r"距今\s*\d+\s*[天月年]"), "距今时长"),
     (re.compile(r"截至\s*recorded_at\s*为\s*\d+"), "按写入时点计算的量"),
@@ -67,7 +73,7 @@ def parse_all() -> tuple[list[dict], list[str]]:
     problems: list[str] = []
     for md in sorted(MEM.rglob("*.md")):
         rel = str(md.relative_to(MEM))
-        if "timeline" in md.parts or md.name.startswith("_"):
+        if not memconfig.is_memory_doc(md):
             continue
         section = None
         cur = None
@@ -189,8 +195,8 @@ def check_topic_overlap(items: list[dict]) -> list[tuple[str, str, str]]:
     out = []
     by_dir: dict[str, list[tuple[str, str]]] = {}
     for md in sorted(MEM.rglob("*.md")):
-        if "timeline" in md.parts or md.name.startswith("_"):
-            continue
+        if "timeline" in md.parts or md.name.startswith("_") or "_archive" in md.parts:
+            continue  # _archive/ 是废弃文件的墓地，不是 active 记忆，不参与校验
         head = md.read_text(encoding="utf-8").split("\n---", 1)[0]
         m = re.search(r"^topic:\s*(.+)$", head, re.M)
         topic = m.group(1).strip() if m else md.stem
@@ -253,11 +259,94 @@ def check_age_drift(items: list[dict]) -> list[tuple[str, str, str]]:
     by, bm, bd = map(int, m.groups())
     today = date.today()
     real_age = today.year - by - ((today.month, today.day) < (bm, bd))
+    owner_dir = str(b["path"]).rsplit("/", 1)[0]
     for e in items:
-        for mm in re.finditer(r"(\d+)\s*岁", " ".join(e["body"])):
+        # 只校验与出生记录同目录（同一主体）的条目：拿用户的年龄去校验父亲的年龄必然误报
+        if str(e["path"]).rsplit("/", 1)[0] != owner_dir:
+            continue
+        for mm in re.finditer(r"(\d+)\s*岁(?!之?前|时|那年)", " ".join(e["body"])):
             stated = int(mm.group(1))
             if stated != real_age:
                 out.append(("ERROR", e["path"], f"{e['id']} 写死 {stated} 岁，实际今天 {real_age} 岁 —— 派生值漂移"))
+    return out
+
+
+def check_placeholder(items=None) -> list[tuple[str, str, str]]:
+    """写入后忘了跑 stamp.py 会留下 @NOW/@TODAY，这类占位符绝不能进库。"""
+    out = []
+    pat = re.compile(r"@(NOW|TODAY)\b")
+    for base in (MEM, MEM.parent / "ops"):
+        if not base.exists():
+            continue
+        for md in base.rglob("*.md"):
+            try:
+                text = md.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            code_span = re.compile(r"(`[^`\n]*`)")
+            for i, line in enumerate(text.splitlines(), 1):
+                # 反引号内是"提到"，跳过
+                bare = "".join(p if idx % 2 == 0 else "" for idx, p in enumerate(code_span.split(line)))
+                m = pat.search(bare)
+                if m:
+                    out.append(("ERROR", str(md.relative_to(MEM.parent)),
+                                f"第 {i} 行残留时间占位符 {m.group(0)} —— 忘了跑 `python3 scripts/stamp.py`"))
+    return out
+
+
+def check_future_ts(items: list[dict]) -> list[tuple[str, str, str]]:
+    """时间戳不许晚于当前时刻。编出来的时间一定是"未来"的，这条专抓编时间。"""
+    now = datetime.now().astimezone()
+    out = []
+    keys = ("spoken_at", "recorded_at", "clarified_at", "corrected_at", "valid_from", "valid_until")
+    for e in items:
+        for k in keys:
+            v = str(e["fields"].get(k, ""))
+            m = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", v)
+            if not m:
+                continue
+            try:
+                t = datetime.fromisoformat(m.group(1)).replace(tzinfo=now.tzinfo)
+            except ValueError:
+                continue
+            if t > now:
+                out.append(("ERROR", e["path"],
+                            f"{e['id']} {k}={v} 晚于当前 {now.isoformat(timespec='seconds')} —— 时间戳必须取自 `date -Iseconds`，不许估算"))
+    return out
+
+
+def check_future_day(items=None) -> list[tuple[str, str, str]]:
+    """时间线行首日期不许晚于今天。"""
+    out = []
+    p = MEM / "timeline" / "events.md"
+    if not p.exists():
+        return out
+    today = date.today()
+    for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+        m = re.match(r"^- (\d{4}-\d{2}-\d{2})", line)
+        if m and date.fromisoformat(m.group(1)) > today:
+            out.append(("ERROR", "timeline/events.md", f"第 {i} 行日期 {m.group(1)} 晚于今天 {today} —— 时间线不许有未来事件"))
+    return out
+
+
+def check_source(items: list[dict]) -> list[tuple[str, str, str]]:
+    """推论必须自证：标 source=inference、不得 high、且写明可推翻条件。"""
+    out = []
+    for e in items:
+        if e["section"] != "current":
+            continue
+        f = e["fields"]
+        # 只检查自述正文：以 ">" 开头的是引用行（evidence / clarification），含用户原话，不算 agent 推断
+        body = " ".join(l for l in e["body"] if not l.strip().startswith(">"))
+        # 引号内是引用（用户原话/他人说法），不算 agent 自己的推断
+        body = re.sub(r'"[^"]*"|“[^”]*”', '', body)
+        if f.get("source") == "inference":
+            if f.get("confidence") == "high":
+                out.append(("ERROR", e["path"], f"{e['id']} source=inference 却标 confidence: high —— 推论不得当事实引用"))
+            if "可推翻条件" not in body:
+                out.append(("ERROR", e["path"], f"{e['id']} source=inference 缺「可推翻条件:」行 —— 无从验证的推论不许入库"))
+        elif INFER_MARK.search(body):
+            out.append(("WARN", e["path"], f"{e['id']} 正文含第一人称推断但未标 source: inference"))
     return out
 
 
@@ -396,8 +485,10 @@ def check_bloat(items: list[dict]) -> list[tuple[str, str, str]]:
         if e["section"] != "current":
             continue
         n = len(" ".join(e["body"]))
-        if n > 1200:
-            out.append(("WARN", e["path"], f"{e['id']} 正文 {n} 字符过于臃肿 —— 拆分，或把细节移到 notes / 独立条目"))
+        if n > BUDGET_HARD:
+            out.append(("ERROR", e["path"], f"{e['id']} 正文 {n} 字符超硬上限 {BUDGET_HARD} —— 必须拆文件或裁掉分析（指针优先于复制）"))
+        # 软线（BUDGET_SOFT）不在全库扫描中告警：它对新增内容才有引导意义，
+        # 由 `check.py --budget` 在写入前执行，避免存量噪音淹没真问题
         clar = sum(1 for x in e["notes"] if x.lower().startswith("clarification:"))
         if clar >= 3:
             out.append(("WARN", e["path"], f"{e['id']} 累积 {clar} 次 clarification —— 应把澄清内容并入主描述（变更史留在 timeline）"))
@@ -646,7 +737,7 @@ def check_gitignore_boundary(items: list[dict]) -> list[tuple[str, str, str]]:
     return out
 
 
-CHECKS = [check_structure, check_content, check_topic_overlap, check_payroll, check_age_drift, check_timeline, check_semantic_overlap, check_entity_coverage, check_bloat, check_location_pairs, check_public_gap, check_evidence_fidelity, check_term_homonym, check_award_team, check_pii_in_code, check_gitignore_boundary]
+CHECKS = [check_structure, check_content, check_source, check_placeholder, check_future_ts, check_future_day, check_topic_overlap, check_payroll, check_age_drift, check_timeline, check_semantic_overlap, check_entity_coverage, check_bloat, check_location_pairs, check_public_gap, check_evidence_fidelity, check_term_homonym, check_award_team, check_pii_in_code, check_gitignore_boundary]
 
 
 # --------------------------------------------------------------- 写前模式
@@ -719,7 +810,19 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="记忆库门禁与冲突检测（只读）")
     ap.add_argument("--pre", metavar="PATH", help="写前检查模式：检查目标文件及其潜在冲突")
     ap.add_argument("--pre-text", metavar="TEXT", dest="pre_text", help="写前语义检索：直接给出将要写入的事实摘要")
+    ap.add_argument("--budget", metavar="TEXT", help="写前体量估算：给出将写入正文的字符数与拆分建议")
     args = ap.parse_args()
+    if args.budget:
+        n = len(args.budget)
+        print(f"正文字符数：{n}（软线 {BUDGET_SOFT} / 硬上限 {BUDGET_HARD}）")
+        if n > BUDGET_HARD:
+            print("❌ 超硬上限 —— 必须拆文件，或删掉分析与推论，只留事实")
+            return 1
+        if n > BUDGET_SOFT:
+            print("⚠️ 超软线 —— 先问一句：要加的这个会不会在另一条时间线上自己变？会 → 新文件，老文件留指针")
+            return 0
+        print("✅ 在预算内")
+        return 0
     if args.pre_text:
         print("=== 写前语义检索 ===")
         return pre_check_text(args.pre_text)

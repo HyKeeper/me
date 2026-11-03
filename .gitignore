@@ -30,7 +30,11 @@ ops/*
 !ops/export-spec.md
 
 # ---- 导出物：一整份完整人身档案 ----
-export-*.md
+# 必须写 /export-*.md（锚定根目录）。写成 export-*.md 会连 ops/export-spec.md
+# 一起吃掉 —— 且它在文件里位置更靠后，按「最后匹配胜出」会覆盖上面那条白名单，
+# 导致 !ops/export-spec.md 静默失效，文件从未进过仓库。
+/export-*.md
+!ops/export-spec.md
 
 # ---- 环境 ----
 __pycache__/
@@ -41,3 +45,12 @@ __pycache__/
 # ---- 编辑器 ----
 .vscode/
 .idea/
+
+# ---- 工具层：默认同样排除 ----
+# 上面 memory/ 与 ops/ 是"默认排除、白名单放行"，scripts/ 此前却是默认全放行。
+# 这是一个不对称：规则只保护了数据，没保护工具。
+# 下面这几个脚本本身不含真实数据（token 从 ~/.git-credentials 读，不落盘），
+# 但它们暴露了「有什么、从哪拿」——公开无收益，故排除。
+scripts/push_via_api.py
+scripts/rsu.py
+scripts/total-comp.py

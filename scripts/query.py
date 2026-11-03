@@ -29,6 +29,8 @@ ROOT = Path(os.environ.get("MEMORY_ROOT") or Path(__file__).resolve().parent.par
 MEM = ROOT / "memory"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import memconfig  # noqa: E402  —— 路径口径的唯一真相见 is_memory_doc()
+
 try:
     import semantic
 except Exception:  # pragma: no cover
@@ -43,7 +45,7 @@ def parse_entries() -> list[dict]:
     items: list[dict] = []
     for md in sorted(MEM.rglob("*.md")):
         rel = str(md.relative_to(MEM))
-        if "timeline" in md.parts or md.name.startswith("_"):
+        if not memconfig.is_memory_doc(md):
             continue
         section, cur = None, None
         for line in md.read_text(encoding="utf-8").splitlines():

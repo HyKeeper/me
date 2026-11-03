@@ -35,6 +35,9 @@ from pathlib import Path
 ROOT = Path(os.environ.get("MEMORY_ROOT") or Path(__file__).resolve().parent.parent).resolve()
 MEM = ROOT / "memory"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import memconfig  # noqa: E402  —— 路径口径的唯一真相见 is_memory_doc()
+
 ENTRY_RE = re.compile(r"^- \[id:\s*([^\]]+)\]")
 FIELD_RE = re.compile(r"\[(\w+):\s*([^\]]*)\]")
 EN_RE = re.compile(r"[a-z][a-z0-9+#./]*|\d+(?:[.,]\d+)*")
@@ -181,7 +184,7 @@ def parse_docs() -> list[dict]:
     docs: list[dict] = []
     for md in sorted(MEM.rglob("*.md")):
         rel = str(md.relative_to(MEM))
-        if "timeline" in md.parts or md.name.startswith("_"):
+        if not memconfig.is_memory_doc(md):
             continue
         text_all = md.read_text(encoding="utf-8")
         mt = re.search(r"^topic:\s*(.+)$", text_all.split("---")[1] if text_all.startswith("---") and len(text_all.split("---")) > 1 else "", re.M)

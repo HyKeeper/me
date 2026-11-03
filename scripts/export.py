@@ -68,7 +68,7 @@ def parse_entries() -> list[dict]:
     entries: list[dict] = []
     for md in sorted(MEM.rglob("*.md")):
         rel = str(md.relative_to(MEM))
-        if "timeline" in md.parts or md.name.startswith("_"):
+        if not memconfig.is_memory_doc(md):
             continue
         cur, in_cur = None, False
         for line in md.read_text(encoding="utf-8").splitlines():
@@ -138,11 +138,11 @@ def voice_fingerprint(entries: list[dict]) -> tuple[dict, list[str]]:
     if stats["comma"] >= stats["n"]:
         obs.append(f"逗号密度 {stats['comma']} 个 / {stats['n']} 条，习惯用逗号串多个信息点。")
     if stats["mixed_case"]:
-        obs.append("中英混用不求分隔：如「在北京的shopee」，中文与英文之间不加空格。")
+        obs.append("中英混用不求分隔：中文与英文之间不加空格。")
     if stats["space_before_punct"]:
-        obs.append("**标点前有空格**（「shopee ，我是」）—— 这是打字节奏造成的，不是笔误；模仿他打字时应保留。")
+        obs.append("**标点前有空格**（如「某词 ，某词」）—— 是打字节奏造成的，不是笔误；模仿他打字时应保留。")
     if stats["digit_month"]:
-        obs.append("月份用点号书写（「2022.4月」），不用「四月」或「2022-04」。")
+        obs.append("月份用点号书写（如「2022.4」），不用「四月」或「2022-04」。")
     if stats["emoji"] == 0:
         obs.append("不用 emoji。")
     if not obs:
